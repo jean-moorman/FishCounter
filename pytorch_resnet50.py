@@ -18,7 +18,7 @@ plt.ion() #interactive mode on
 
 data_transforms = {
     'train': transforms.Compose([
-    transforms.RandomResizedCrop(224),
+    transforms.RandomResizedCrop(size=224, shape=(0.9,1.0)),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize([0.5,0.5,0.5],[0.5,0.5,0.5]) #this should probably be customized

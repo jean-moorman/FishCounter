@@ -37,9 +37,9 @@ image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transf
 
 dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=4, shuffle=True, num_workers=4, sampler=None) for x in ['train', 'val']}
 
-#dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']} not necessary right now
+dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
 
-#class_names = image_datasets['train'].classes ^this too
+class_names = image_datasets['train'].classes
 
 device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
 

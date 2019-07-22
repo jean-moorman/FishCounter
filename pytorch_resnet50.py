@@ -14,7 +14,7 @@ import time
 import copy
 import pdb
 
-plt.ion()
+plt.ion() #interactive mode on
 
 data_transforms = {
     'train': transforms.Compose([
@@ -43,7 +43,7 @@ dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=4, s
 
 device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
 
-def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
+def train_model(model, criterion, optimizer, scheduler, num_epochs=55):
 
     since = time.time()
 
@@ -185,7 +185,7 @@ model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler, num_
 
 #save_path2 = '/home/jmoorman9/Desktop/resnet_state.pth'
 #torch.save(model_ft.state_dict(), save_path2)
+### model = torch.load(save_path2)
 
 torch.save(model_ft, save_path)
-### model = torch.load(save_path2)
-### visualize_model(model, save_path2)
+### visualize_model(model, save_path)

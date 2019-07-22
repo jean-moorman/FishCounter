@@ -35,13 +35,11 @@ data_dir = '/home/jmoorman9/Desktop/Detection_Data'
 
 image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x]) for x in ['train', 'val']}
 
-#sampler = WeightedRandomSampler([1, 0.545], 2) #calculated from # of Empty/Fish items <<<NOT WORKING>>>
-
 dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=4, shuffle=True, num_workers=4, sampler=None) for x in ['train', 'val']}
 
-dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
+#dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']} not necessary right now
 
-class_names = image_datasets['train'].classes
+#class_names = image_datasets['train'].classes ^this too
 
 device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
 
@@ -76,7 +74,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 optimizer.zero_grad()
 
                 #forward pass
-                #track history if only in train
+                #track history only in train
                 with torch.set_grad_enabled(phase == 'train'):
                     outputs = model(inputs)
                     _, preds = torch.max(outputs, 1)
@@ -90,19 +88,19 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
                 #stats
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds == labels.data)
-                #this is where you could probably get the mislabeled frames
+                #this is where you could probably get the mislabeled frames maybe using preds != labels.data
 
             epoch_loss = running_loss / dataset_sizes[phase]
             epoch_acc = running_corrects.double() / dataset_sizes[phase]
 
             print('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
 
-            #deep copy the model
+            #deep copy the model's best weights
             if phase == 'val' and epoch_acc > best_acc:
                 best_acc = epoch_acc
                 best_model_wts = copy.deepcopy(model.state_dict())
 
-        print() #what does this do??
+        print() #does this do anything?? idts :|
 
     time_elapsed = time.time() - since
     print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
@@ -131,7 +129,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
 #         return False
 
 
-def visualize_model(model, num_images=6):
+def visualize_model(model, num_images=6): #not working right now
     was_training = model.training
     model.eval()
     images_so_far = 0
@@ -160,19 +158,18 @@ def visualize_model(model, num_images=6):
 
         model.train(mode=was_training)
 
-'''
+''' Uncomment to start fresh
 model_ft = models.resnet50(pretrained=True)
 num_ftrs = model_ft.fc.in_features
 model_ft.fc = nn.Linear(num_ftrs, 2)
 '''
-save_path2 = '/home/jmoorman9/Desktop/resnet.pth'
-model_ft = torch.load(save_path2)
 
+save_path = '/home/jmoorman9/Desktop/resnet.pth'
+model_ft = torch.load(save_path)
 model_ft = model_ft.to(device)
 
 
-
-weights = [0.6608, 0.3392] #794:1547
+weights = [0.6608, 0.3392] #794:1547 samples of Empty:Fish
 class_weights = torch.FloatTensor(weights).to(device)
 criterion = nn.CrossEntropyLoss(weight = class_weights)
 
@@ -186,9 +183,9 @@ exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
 #train/evaluate
 model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler, num_epochs = 100)
 
-#save_path = '/home/jmoorman9/Desktop/resnet_state.pth'
-#torch.save(model_ft.state_dict(), save_path)
+#save_path2 = '/home/jmoorman9/Desktop/resnet_state.pth'
+#torch.save(model_ft.state_dict(), save_path2)
 
-torch.save(model_ft, save_path2)
+torch.save(model_ft, save_path)
 ### model = torch.load(save_path2)
 ### visualize_model(model, save_path2)

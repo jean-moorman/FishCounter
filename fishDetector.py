@@ -1,3 +1,5 @@
+#implemented from https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html
+
 from __future__ import print_function, division
 import matplotlib.pyplot as plt
 import torch
@@ -18,20 +20,20 @@ plt.ion() #interactive mode on
 
 data_transforms = {
     'train': transforms.Compose([
-    transforms.RandomResizedCrop(size=224, shape=(0.9,1.0)),
+    transforms.RandomResizedCrop(size=224, scale=(0.9,1.0)),
     transforms.RandomHorizontalFlip(),
+    transforms.RandomVerticalFlip(),
     transforms.ToTensor(),
     transforms.Normalize([0.5,0.5,0.5],[0.5,0.5,0.5]) #this should probably be customized
     ]),
     'val': transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
+    transforms.RandomResizedCrop(size=224, scale=(0.9,1.0)), 
     transforms.ToTensor(),
     transforms.Normalize([0.5,0.5,0.5],[0.5,0.5,0.5]) #this too
     ])
 }
 
-data_dir = '/home/jmoorman9/Desktop/Detection_Data'
+data_dir = '/home/username/Desktop/Detection_Data'
 
 image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x]) for x in ['train', 'val']}
 
@@ -41,7 +43,7 @@ dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
 
 class_names = image_datasets['train'].classes
 
-device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu") #using GPU 3
 
 def train_model(model, criterion, optimizer, scheduler, num_epochs=55):
 
@@ -99,7 +101,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=55):
                 best_acc = epoch_acc
                 best_model_wts = copy.deepcopy(model.state_dict())
 
-        print() #does this do anything?? idts :|
+        print() #empty line
 
     time_elapsed = time.time() - since
     print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
@@ -163,12 +165,14 @@ num_ftrs = model_ft.fc.in_features
 model_ft.fc = nn.Linear(num_ftrs, 2)
 '''
 
-save_path = '/home/jmoorman9/Desktop/resnet.pth'
+#save_path2 = '/home/username/Desktop/resnet_state.pth'
+### model.load_state_dict(torch.load(save_path2))
+
+save_path = '/home/username/Desktop/resnet.pth'
 model_ft = torch.load(save_path)
 model_ft = model_ft.to(device)
 
-
-weights = [0.6608, 0.3392] #794:1547 samples of Empty:Fish
+weights = [0.6367, 0.3633] #792:1388 samples of Empty:Fish
 class_weights = torch.FloatTensor(weights).to(device)
 criterion = nn.CrossEntropyLoss(weight = class_weights)
 
@@ -182,9 +186,7 @@ exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
 #train/evaluate
 model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler, num_epochs = 100)
 
-#save_path2 = '/home/jmoorman9/Desktop/resnet_state.pth'
 #torch.save(model_ft.state_dict(), save_path2)
-### model = torch.load(save_path2)
 
 torch.save(model_ft, save_path)
 ### visualize_model(model, save_path)

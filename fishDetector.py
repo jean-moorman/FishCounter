@@ -1,4 +1,5 @@
 #implemented from https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html
+#achieved >99% accuracy
 
 from __future__ import print_function, division
 import matplotlib.pyplot as plt

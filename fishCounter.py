@@ -1,5 +1,6 @@
 #implemented from https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html
-### CrossEntropyLoss w/ frozen resnet50
+### CrossEntropyLoss w/ unfrozen resnet50
+#achieved 94% accuracy with 10000 frames
 
 from __future__ import print_function, division
 import matplotlib.pyplot as plt
@@ -7,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim import lr_scheduler
+from torch.utils.data.sampler import WeightedRandomSampler
 #from sampler import ImbalancedDatasetSampler
 import numpy as np
 import torchvision
@@ -35,9 +37,11 @@ data_transforms = {
     ])
 }
 
-data_dir = '/home/jmoorman9/Desktop/Counting_Data'
+data_dir = '/home/username/Desktop/Counting_Data'
 
-mis_dir = '/home/jmoorman9/Desktop/Mislabeled_Counts'
+#mis_dir = '/home/username/Desktop/Mislabeled_Counts'
+
+cweights = [0.6035, 0.6137, 0.8485, 0.9499, 0.9851, 1] #class weights for samples 3942:3841:1506:498:148:8
 
 image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x]) for x in ['train', 'val']}
 
@@ -88,7 +92,8 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=55):
                 with torch.set_grad_enabled(phase == 'train'):
                     outputs = model(inputs)
                     _, preds = torch.max(outputs, 1)
-                    loss = criterion(outputs, labels)
+                    #output = outputs[:, -1] ###only use for L1 or MSELoss
+                    loss = criterion(outputs, labels) #should be labels.float() for L1 or MSELoss
 
                     #backward pass / optimization only in training
                     if phase == 'train':
@@ -138,7 +143,7 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=55):
 #               ''.format(data.ndim))
 #         return False
 
-
+'''
 def visualize_model(model, num_images=6):
     was_training = model.training
     model.eval()
@@ -168,34 +173,37 @@ def visualize_model(model, num_images=6):
                     return
 
         model.train(mode=was_training)
+'''
 
 
 model_ft = models.resnet50(pretrained=True)
 num_ftrs = model_ft.fc.in_features
 
-#freeze all except last layer
+#freezes all except last layer
 '''
 for param in model_ft.parameters():
     param.requires_grad = False
 '''
 model_ft.fc = nn.Linear(num_ftrs, 6)
 
-
-#save_path2 = '/home/jmoorman9/Desktop/resnet_state.pth'
+#saving/loading state_dict
+#save_path2 = '/home/username/Desktop/resnet_state.pth'
 ### model.load_state_dict(torch.load(save_path2))
 
-save_path = '/home/jmoorman9/Desktop/resnetC4.pth'
+#saving/loading state
+save_path = '/home/jmoorman9/Desktop/resnetC.pth'
 #comment out the next line to start from scratch
-#model_ft = torch.load(save_path)
+model_ft = torch.load(save_path)
 
 model_ft = model_ft.to(device)
 
+class_weights = torch.FloatTensor(cweights).to(device) #only for Cross Entropy Loss
 
-weights = [0.6035, 0.6137, 0.8485, 0.9499, 0.9851, 1]
-class_weights = torch.FloatTensor(weights).to(device)
 criterion = nn.CrossEntropyLoss(weight = class_weights)
+#criterion = nn.MSELoss()
+#criterion = nn.L1Loss()
 
-# Observe that all parameters are being optimized
+# Optimizers:
 #optimizer_ft = optim.SGD(model_ft.parameters(), lr=0.001, momentum=0.9)
 optimizer_ft = optim.Adam(model_ft.parameters(), lr=0.0001)
 
@@ -221,6 +229,5 @@ print(confusion_matrix)
 
 torch.save(model_ft, save_path)
 
-### visualize_model(model, save_path)
+### visualize_model(model, save_path) <--- doesn't work yet
 
-#you can still add more frames from MC16a AND you can add from NotYetLabeled in DLC

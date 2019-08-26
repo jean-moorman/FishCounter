@@ -1,6 +1,6 @@
 #implemented from https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html
 ### CrossEntropyLoss w/ unfrozen resnet50
-#achieved 94% accuracy with 10000 frames
+#achieved 95% accuracy with 10000 frames
 
 from __future__ import print_function, division
 import matplotlib.pyplot as plt
@@ -41,17 +41,18 @@ data_dir = '/home/username/Desktop/Counting_Data'
 
 #mis_dir = '/home/username/Desktop/Mislabeled_Counts'
 
-cweights = [0.6035, 0.6137, 0.8485, 0.9499, 0.9851, 1] #class weights for samples 3942:3841:1506:498:148:8
+#cweights = [0.6035, 0.6137, 0.8485, 0.9499, 0.9851, 1] #class weights for samples 3942:3841:1506:498:148:8
+cweights = [0.6035, 0.6137, 0.8485, 0.9, 10, 100] #should probably raise 0.9 to 0.9499 again
 
 image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x]) for x in ['train', 'val']}
 
-dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=4, shuffle=True, num_workers=4, sampler=None) for x in ['train', 'val']}
+dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=16, shuffle=True, num_workers=4, sampler=None) for x in ['train', 'val']}
 
 dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
 
 class_names = image_datasets['train'].classes
 
-device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu") #set cuda:# to your gpu
 
 
 def train_model(model, criterion, optimizer, scheduler, num_epochs=55):
@@ -68,7 +69,6 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=55):
         #training/validation
         for phase in ['train', 'val']:
             if phase == 'train':
-                scheduler.step()
                 model.train() #set model to training mode
             else:
                 model.eval() #set model to evaluation mode
@@ -104,7 +104,9 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=55):
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds == labels.data)
 
-
+            if phase == 'train':
+                scheduler.step()
+                
             epoch_loss = running_loss / dataset_sizes[phase]
             epoch_acc = running_corrects.double() / dataset_sizes[phase]
 
@@ -191,9 +193,10 @@ model_ft.fc = nn.Linear(num_ftrs, 6)
 ### model.load_state_dict(torch.load(save_path2))
 
 #saving/loading state
-save_path = '/home/jmoorman9/Desktop/resnetC.pth'
+old_save_path = '/home/username/Desktop/resnetC.pth'
+new_save_path = '/home/username/Desktop/resnetC2.pth'
 #comment out the next line to start from scratch
-model_ft = torch.load(save_path)
+model_ft = torch.load(old_save_path)
 
 model_ft = model_ft.to(device)
 
@@ -227,7 +230,7 @@ print(confusion_matrix)
 
 #torch.save(model_ft.state_dict(), save_path2)
 
-torch.save(model_ft, save_path)
+torch.save(model_ft, new_save_path)
 
 ### visualize_model(model, save_path) <--- doesn't work yet
 

@@ -324,7 +324,8 @@ class FishCounter:
                 _, preds = torch.max(outputs, 1)
                 for t, p in zip(classes.view(-1), preds.view(-1)):
                         confusion_matrix[t.long(), p.long()] += 1
-
+        
+        print('Confusion Matrix:')
         print(confusion_matrix)
 
         new_save_path = os.path.join(os.getcwd(), 'fishCounter.pth')

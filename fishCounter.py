@@ -1,236 +1,366 @@
 #implemented from https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html
-### CrossEntropyLoss w/ unfrozen resnet50
-#achieved 95% accuracy with 10000 frames
 
 from __future__ import print_function, division
 import matplotlib.pyplot as plt
-import torch
+import torch, os, argparse, subprocess, random, time, copy, pdb
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim import lr_scheduler
-from torch.utils.data.sampler import WeightedRandomSampler
-#from sampler import ImbalancedDatasetSampler
+from torch.utils.data import Dataset, DataLoader
 import numpy as np
-import torchvision
-from torchvision import datasets, models, transforms
-import matplotlib.pyplot as plt
-import os
-import time
-import copy
-import pdb
-#from PIL import Image
+#import torchvision
+from torchvision import models, transforms
+from PIL import Image
+import cv2
+import pandas as pd
 
-plt.ion() #interactive mode on
+#import matplotlib.pyplot as plt
+#plt.ion() interactive mode
 
-data_transforms = {
-    'train': transforms.Compose([
-    transforms.RandomResizedCrop(size=224, scale=(0.9,1.0)),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomVerticalFlip(),
-    transforms.ToTensor(),
-    transforms.Normalize([0.5,0.5,0.5],[0.5,0.5,0.5]) #this should probably be customized
-    ]),
-    'val': transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.5,0.5,0.5],[0.5,0.5,0.5]) #this too
-    ])
-}
+class CountingDataset(Dataset):
 
-data_dir = '/home/username/Desktop/Counting_Data'
+    def __init__(self, data_dict, transforms=None):
+        self.data_list = list(data_dict.keys())
+        self.data_dict = data_dict
+        self.transforms = transforms
 
-#mis_dir = '/home/username/Desktop/Mislabeled_Counts'
+    def __getitem__(self, index):
 
-#cweights = [0.6035, 0.6137, 0.8485, 0.9499, 0.9851, 1] #class weights for samples 3942:3841:1506:498:148:8
-cweights = [0.6035, 0.6137, 0.8485, 0.9, 10, 100] #should probably raise 0.9 to 0.9499 again
+        with open(self.data_list[index], 'rb') as f:
+            img = Image.open(f).convert('RGB')
 
-image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x]) for x in ['train', 'val']}
+        return self.transforms(img), self.data_dict[self.data_list[index]]
 
-dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=16, shuffle=True, num_workers=4, sampler=None) for x in ['train', 'val']}
+    def __len__(self):
+        return len(self.data_dict)
 
-dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
+class FishCounter:
 
-class_names = image_datasets['train'].classes
+    def __init__(self, dataLoaderCommand, lossFunction = 'CCE', optimizer = 'adam', scheduler = 'step', modelDepth = '50', frozenFlag = False, saved = True, device = '0', lr = 0.0001):
 
-device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu") #set cuda:# to your gpu
+        self.device = torch.device("cuda:" + str(device) if torch.cuda.is_available() else "cpu") #default: '0'
+
+        self.prepareData(dataLoaderCommand) #no default
+        self.createModel(lossFunction, modelDepth, frozenFlag, saved) #default: 'CCE', '50', False, True
+        self.setCriterion(lossFunction) #default: 'CCE'
+        self.setOptimizer(optimizer, lr) #default: 'adam' , 1e-4
+        self.setScheduler(scheduler) #default: 'step'
+
+        
+    def prepareData(self, command):
+        commands = ['Train', 'UseCase']
+        if command not in  commands:
+            raise ValueException('dataLoaderCommand argument must be one of ' + ','.join(commands))
+
+        if command == 'Train':
+            self.dataLoaderTrain()
+
+        if command == 'UseCase':
+            self.dataLoaderUseCase()
+            
+            
+    def dataLoaderTrain(self):
+
+        subprocess.call(['rclone', 'copy', 'cichlidVideo:McGrath/Apps/CichlidPiData/__Counting/', 'CountingData']) #works on server
+
+        data_transforms = {
+            'train': transforms.Compose([
+            transforms.RandomResizedCrop(size=224, scale=(0.9,1.0)),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize([0.5,0.5,0.5],[0.5,0.5,0.5]) #this should probably be customized
+            ]),
+            'val': transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.5,0.5,0.5],[0.5,0.5,0.5]) #this too
+            ])
+        }
+
+        image_data = {}
+        image_data['val'] = {}
+        image_data['train'] = {}
+
+        
+        for project in [x for x in os.listdir('CountingData/') if x[0] != '.']:
+            for video in [x for x in os.listdir('CountingData/' + project) if x[0] != '.']:
+                for label in [x for x in os.listdir('CountingData/' + project + '/' + video) if x[0] != '.']:
+                    if label != 'p':
+                        for videofile in [x for x in os.listdir('CountingData/' + project + '/' + video + '/' + label) if x[-3:] == 'jpg']:
+                            if random.randint(0,4) == 0: #20:80 val:train
+                                image_data['val']['CountingData/' + project + '/' + video + '/' + label + '/' + videofile] = int(label)
+                            else:
+                                image_data['train']['CountingData/' + project + '/' + video + '/' + label + '/' + videofile] = int(label)
+        
+
+        self.dataloaders = {x: DataLoader(CountingDataset(image_data[x], transforms = data_transforms[x]), batch_size=32, shuffle=True, num_workers=4, sampler=None) for x in ['train', 'val']}
 
 
-def train_model(model, criterion, optimizer, scheduler, num_epochs=55):
+    def dataLoaderUseCase(self):
 
-    since = time.time()
+        data_transforms = transforms.Compose([
+            transforms.Resize((224,224)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.5, 0.5, 0.5],[0.5, 0.5, 0.5])
+            ])
 
-    best_model_wts = copy.deepcopy(model.state_dict())
-    best_acc = 0.0
+        image_data = {}
 
-    for e in range(num_epochs):
-        print('Epoch {}/{}'.format(e, num_epochs - 1))
-        print('-' * 10)
 
-        #training/validation
-        for phase in ['train', 'val']:
-            if phase == 'train':
-                model.train() #set model to training mode
-            else:
-                model.eval() #set model to evaluation mode
+        for video in os.listdir(video_dir):
+            vidcap = cv2.VideoCapture(video_dir + '/' + video)
+            success = False
+            while not success:
+                success, image = vidcap.read()
 
-            running_loss = 0.0
-            running_corrects = 0
 
-            #iterate over data
-            for inputs, labels in dataloaders[phase]:
+            cv2.imshow('Identify the parts of the frame that include tray to analyze', image)
+            tray_r = cv2.selectROI('Identify the parts of the frame that include tray to analyze', image, fromCenter = False)
+            tray_r = tuple([int(x) for x in tray_r]) # sometimes a float is returned
+            self.tray_r = [tray_r[1],tray_r[0],tray_r[1] + tray_r[3], tray_r[0] + tray_r[2]] # (x0,y0,xf,yf)
 
+            # if bounding box is close to the edge just set it as the edge
+            if self.tray_r[0] < 50:
+                self.tray_r[0] = 0
+            if self.tray_r[1] < 50:
+                self.tray_r[1] = 0
+            if image.shape[0] - self.tray_r[2]  < 50:
+                self.tray_r[2] = image.shape[0]
+            if image.shape[1] - self.tray_r[3]  < 50:
+                self.tray_r[3] = image.shape[1]
+
+            vidcap.release()
+            # Destroy windows (running it 3 times helps for some reason)
+            for i in range(3):
+                cv2.destroyAllWindows()
+                cv2.waitKey(1)
+
+            count = 0
+            #pdb.set_trace()
+            success = True
+            while success:
+                #cv2.imwrite(os.path.join(test_dir, "frame%d.jpg" % count), image)
+                print("Read frame #%d: " % count, success)
+                dataArray = image
+
+                #Set data outside of tray to np.nan
+                dataArray[:,:self.tray_r[0],:] = np.nan
+                dataArray[:,self.tray_r[2]:,:] = np.nan
+                dataArray[:,:,:self.tray_r[1]] = np.nan
+                dataArray[:,:,self.tray_r[3]:] = np.nan
+
+                PImage = Image.fromarray(dataArray)
+                PImage.save(os.path.join(test_dir, "frame%d.jpg" % count))
+
+                image_data[os.path.join(test_dir, "frame%d.jpg" % count)] = int(count)
+
+
+                success, image = vidcap.read()
+                count += 1
+
+        ###fill image_data with video frame directories & time points
+        self.testDataloader = DataLoader(CountingDataset(image_data, transforms = data_transforms), batch_size = 32, shuffle = False, num_workers = 4, sampler = None)
+
+        
+    def setCriterion(self, lossFunction):
+        lossFunctions = ['L1', 'L2', "CCE"]
+        if lossFunction not in lossFunctions:
+            raise ValueException('command argument must be one of ' + ','.join(lossFunctions))
+
+        if lossFunction == 'L1':
+            self.criterion = nn.L1Loss()
+        elif lossFunction == 'L2':
+            self.criterion = nn.MSELoss()
+        elif lossFunction == 'CE':
+            cweights = [0.6035, 0.6137, 0.8485, 0.9499, 10, 100] #should probably raise 3 to 0.9499, initially 4:0.9851
+            class_weights = torch.FloatTensor(cweights).to(device)
+            self.criterion = nn.CrossEntropyLoss(weight = class_weights)
+
+            
+    def setOptimizer(self, optimizer, lr = 0.0001):
+        optimizers = ['adam', 'sgd']
+        if optimizer not in optimizers:
+            raise ValueException('optimizer argument must be one of ' + ','.join(optimizers))
+
+        if optimizer == 'adam':
+            self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+
+        if optimizer == 'sgd':
+            self.optimizer = optim.SGD(self.model.parameters(), lr=lr, momentum=0.9)
+
+            
+    def setScheduler(self, scheduler, **kwargs):
+        schedulers = ['none', 'step', 'cycle']
+        if scheduler not in schedulers:
+            raise ValueException('scheduler argument must be one of ' + ','.join(schedulers))
+        # Decay LR by a factor of 0.1 every 7 epoch_loss
+
+        if scheduler == 'step':
+            self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size = 7, gamma = 0.1)
+
+            
+    def createModel(self, lossFunction, depth, frozenFlag, saved):
+
+        lossFunctions = ['L1', 'L2', 'CCE']
+        if lossFunction not in lossFunctions:
+            raise ValueException('lossFunction argument must be one of ' + ','.join(lossFunctions))
+
+        depth = str(depth)
+        depths = ['10', '18', '34', '50']
+        if depth not in depths:
+            raise ValueException('modelDepth argument must be one of ' + ','.join(depths))
+
+        if depth == '10':
+            model = models.resnet10(pretrained=True)
+        if depth == '18':
+            model = models.resnet18(pretrained=True)
+        if depth == '34':
+            model = models.resnet34(pretrained=True)
+        if depth == '50':
+            model = models.resnet50(pretrained=True)
+
+        num_ftrs = model.fc.in_features
+
+        if frozenFlag:
+            for param in model.parameters():
+                param.requires_grad = False
+
+        if lossFunction == 'CCE':
+            model.fc = nn.Linear(num_ftrs, 6)
+        else:
+            model.fc = nn.Linear(num_ftrs, 1)
+
+        if saved:
+            old_save_path = os.path.join(os.getcwd(), 'resnetCountSRG.pth')
+            model = torch.load(old_save_path)
+            #self.model = torch.load_state_dict(old_save_path)
+
+        self.model = model
+
+
+    def trainModel(self, num_epochs=55):
+
+        since = time.time()
+        self.model = self.model.to(self.device)
+
+        best_model_wts = copy.deepcopy(model.state_dict())
+        best_acc = 0.0
+
+        for e in range(num_epochs):
+            print('Epoch {}/{}'.format(e, num_epochs - 1))
+            print('-' * 10)
+
+            #training/validation
+            for phase in ['train', 'val']:
+                if phase == 'train':
+
+                    self.model.train() #set model to training mode
+                else:
+                    self.model.eval() #set model to evaluation mode
+
+                running_loss, running_corrects = 0.0, 0
+
+                #iterate over data
+                for inputs, labels in self.dataloaders[phase]:
+
+                    inputs = inputs.to(self.device)
+                    labels = labels.to(self.device)
+
+                    #pdb.set_trace()
+
+                    #zero parameter gradients
+                    self.optimizer.zero_grad()
+
+                    #forward pass
+                    #track history if only in train
+                    with torch.set_grad_enabled(phase == 'train'):
+                        outputs = self.model(inputs)
+
+                        if type(self.criterion) == torch.nn.modules.CrossEntropyLoss:
+                            _, preds = torch.max(outputs, 1)
+                            loss = self.criterion(outputs, labels)
+                        else:
+                            preds = outputs.int()[:,-1].type(torch.int64) #don't know if this works yet
+                            loss = self.criterion(outputs[:,-1], labels.float())
+
+                        #backward pass / optimization only in training
+                        if phase == 'train':
+                            loss.backward()
+                            self.optimizer.step()
+
+                    #stats
+                    running_loss += loss.item() * inputs.size(0)
+                    running_corrects += torch.sum(preds == labels.data)
+
+                if phase == 'train':
+                    self.scheduler.step()
+
+                epoch_loss = running_loss / len(self.dataloaders[phase])
+                epoch_acc = running_corrects.double() / len(self.dataloaders[phase])
+
+                print('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
+
+                #deep copy the model
+                if phase == 'val' and epoch_acc > best_acc:
+                    best_acc = epoch_acc
+                    best_model_wts = copy.deepcopy(self.model.state_dict())
+
+            print() #empty line
+
+        time_elapsed = time.time() - since
+        print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+        print('Best val accuracy: {:.4f}'.format(best_acc))
+
+        model.load_state_dict(best_model_wts)
+
+        self.model = model
+
+        confusion_matrix = torch.zeros(6, 6)
+        with torch.no_grad():
+            for i, (inputs, classes) in enumerate(self.dataloaders['val']):
                 inputs = inputs.to(device)
-                labels = labels.to(device)
+                classes = classes.to(device)
+                outputs = model(inputs)
+                _, preds = torch.max(outputs, 1)
+                for t, p in zip(classes.view(-1), preds.view(-1)):
+                        confusion_matrix[t.long(), p.long()] += 1
 
-                #pdb.set_trace()
+        print(confusion_matrix)
 
-                #zero parameter gradients
-                optimizer.zero_grad()
+        new_save_path = os.path.join(os.getcwd(), 'fishCounter.pth')
+        torch.save(model.state_dict(), new_save_path)
 
-                #forward pass
-                #track history if only in train
-                with torch.set_grad_enabled(phase == 'train'):
-                    outputs = model(inputs)
-                    _, preds = torch.max(outputs, 1)
-                    #output = outputs[:, -1] ###only use for L1 or MSELoss
-                    loss = criterion(outputs, labels) #should be labels.float() for L1 or MSELoss
+        
+    def useModel(self, path):
 
-                    #backward pass / optimization only in training
-                    if phase == 'train':
-                        loss.backward()
-                        optimizer.step()
+        graphData = pd.Series([])
 
-                #stats
-                running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data)
+        for inputs, labels in self.testDataloader:
 
-            if phase == 'train':
-                scheduler.step()
-                
-            epoch_loss = running_loss / dataset_sizes[phase]
-            epoch_acc = running_corrects.double() / dataset_sizes[phase]
+            inputs = inputs.to(self.device)
+            labels = labels.to(self.device)
 
-            print('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
+            #pdb.set_trace()
 
-            #deep copy the model
-            if phase == 'val' and epoch_acc > best_acc:
-                best_acc = epoch_acc
-                best_model_wts = copy.deepcopy(model.state_dict())
+            outputs = self.model(inputs)
 
-        print() #empty line
+            graphData.append(torch.max(outputs, 1))
 
-    time_elapsed = time.time() - since
-    print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
-    print('Best val accuracy: {:.4f}'.format(best_acc))
+        histGraph = graphData.hist()
+        fig = histGraph.get_figure()
+        fig.savefig(os.getcwd() + '/figure.pdf')
 
-    model.load_state_dict(best_model_wts)
-
-    return model
-
-# def valid_imshow_data(data):
-#     data = np.asarray(data)
-#     if data.ndim == 2:
-#         return True
-#     elif data.ndim == 3:
-#         if 3 <= data.shape[2] <= 4:
-#             return True
-#         else:
-#             print('The "data" has 3 dimensions but the last dimension '
-#                   'must have a length of 3 (RGB) or 4 (RGBA), not "{}".'
-#                   ''.format(data.shape[2]))
-#             return False
-#     else:
-#         print('To visualize an image the data must be 2 dimensional or '
-#               '3 dimensional, not "{}".'
-#               ''.format(data.ndim))
-#         return False
-
-'''
-def visualize_model(model, num_images=6):
-    was_training = model.training
-    model.eval()
-    images_so_far = 0
-    fig = plt.figure()
-
-    with torch.no_grad():
-        for i, (inputs, labels) in enumerate(dataloaders['val']):
-            inputs = inputs.to(device)
-            labels = labels.to(device)
+        graphData.plot.line(x = 'Time', y = 'Fish Count')
 
 
-            outputs = model(inputs)
-            _, preds = torch.max(outputs, 1)
-
-            for j in range(inputs.size()[0]):
-                images_so_far += 1
-                ax = plt.subplot(2, 2, images_so_far)
-                ax.axis('off')
-                ax.set_title('predicted: {}'.format(class_names[preds[j]]))
-
-                dataOut = (inputs.cpu().data[j])
-                plt.imshow(dataOut)
-
-                if images_so_far == num_images:
-                    model.train(mode=was_training)
-                    return
-
-        model.train(mode=was_training)
-'''
-
-
-model_ft = models.resnet50(pretrained=True)
-num_ftrs = model_ft.fc.in_features
-
-#freezes all except last layer
-'''
-for param in model_ft.parameters():
-    param.requires_grad = False
-'''
-model_ft.fc = nn.Linear(num_ftrs, 6)
-
-#saving/loading state_dict
-#save_path2 = '/home/username/Desktop/resnet_state.pth'
-### model.load_state_dict(torch.load(save_path2))
-
-#saving/loading state
-old_save_path = '/home/username/Desktop/resnetC.pth'
-new_save_path = '/home/username/Desktop/resnetC2.pth'
-#comment out the next line to start from scratch
-model_ft = torch.load(old_save_path)
-
-model_ft = model_ft.to(device)
-
-class_weights = torch.FloatTensor(cweights).to(device) #only for Cross Entropy Loss
-
-criterion = nn.CrossEntropyLoss(weight = class_weights)
-#criterion = nn.MSELoss()
-#criterion = nn.L1Loss()
-
-# Optimizers:
-#optimizer_ft = optim.SGD(model_ft.parameters(), lr=0.001, momentum=0.9)
-optimizer_ft = optim.Adam(model_ft.parameters(), lr=0.0001)
-
-# Decay LR by a factor of 0.1 every 7 epoch_loss
-exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)
-
+        
 #train/evaluate
-model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler, num_epochs = 100)
+#__init__(self, dataLoaderCommand, lossFunction = 'CCE', optimizer = 'adam', scheduler = 'step', modelDepth = '50', frozenFlag = False, saved = True, device = '1', lr = 0.0001, )
 
-confusion_matrix = torch.zeros(6, 6)
-with torch.no_grad():
-    for i, (inputs, classes) in enumerate(dataloaders['val']):
-        inputs = inputs.to(device)
-        classes = classes.to(device)
-        outputs = model_ft(inputs)
-        _, preds = torch.max(outputs, 1)
-        for t, p in zip(classes.view(-1), preds.view(-1)):
-                confusion_matrix[t.long(), p.long()] += 1
+video_dir = os.path.join(os.getcwd(), 'TestVideos')
+test_dir = os.path.join(os.getcwd(), 'TestData')
 
-print(confusion_matrix)
+FC = FishCounter('UseCase')
+FC.useModel(test_dir)
 
-#torch.save(model_ft.state_dict(), save_path2)
-
-torch.save(model_ft, new_save_path)
-
-### visualize_model(model, save_path) <--- doesn't work yet
-
+#FC.trainModel(num_epochs = 100)

@@ -1,5 +1,12 @@
 #implemented from https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html
 
+''' ResNet:
+
+Model Depths: 10, 18, 34, 50
+Loss Functions: CCE, L1, L2
+Optimizers: Adam, SGD
+Schedulers: step '''
+
 from __future__ import print_function, division
 import matplotlib.pyplot as plt
 import torch, os, argparse, subprocess, random, time, copy, pdb
